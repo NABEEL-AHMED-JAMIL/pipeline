@@ -3,7 +3,6 @@ package com.barco.pipeline.model.repository;
 import com.barco.pipeline.model.pojo.LookupData;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.stereotype.Repository;
-
 import java.util.List;
 
 /**

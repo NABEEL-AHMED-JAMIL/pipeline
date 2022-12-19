@@ -1,6 +1,5 @@
 package com.barco.pipeline.util;
 
-import org.aspectj.util.FileUtil;
 import org.springframework.stereotype.Component;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -119,14 +118,4 @@ public class EfsFileUtil {
         return new Gson().toJson(this);
     }
 
-    /**
-     *  public static void main(String[] args) {
-     *     String basePath = "D:\\efs\\logs-folder";
-     *     EfsFileUtil fileUtil = new EfsFileUtil();
-     *     File file = fileUtil.listFilesForFolder(basePath);
-     *     if (!PipelineUtil.isNull(fileUtil)) {
-     *        System.out.println(Arrays.stream(file.listFiles()).count());
-     *     }
-     *  }
-     * */
 }

@@ -1,14 +1,12 @@
 package com.barco.pipeline.util;
 
 
+import com.barco.pipeline.model.parser.ExtractionXmlParser;
 import org.apache.kafka.common.header.Headers;
-import org.w3c.dom.Document;
-import org.xml.sax.InputSource;
-import org.xml.sax.SAXException;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
-import java.io.IOException;
+
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.JAXBException;
+import javax.xml.bind.Unmarshaller;
 import java.io.StringReader;
 import java.util.stream.StreamSupport;
 
@@ -26,6 +24,18 @@ public class PipelineUtil {
         return StreamSupport.stream(headers.spliterator(), false)
             .filter(header -> header.key().equals("__TypeId__"))
             .findFirst().map(header -> new String(header.value())).orElse("N/A");
+    }
+
+    /**
+     * Method use to convert the xml to pojo object
+     * @param xmlPayload
+     * @return ExtractionXmlParser
+     * */
+    public static ExtractionXmlParser extractionXmlParser(String xmlPayload) throws JAXBException {
+        JAXBContext jaxbContext = JAXBContext.newInstance(ExtractionXmlParser.class);
+        Unmarshaller jaxbUnMarshaller = jaxbContext.createUnmarshaller();
+        ExtractionXmlParser loopXmlParser = (ExtractionXmlParser) jaxbUnMarshaller.unmarshal(new StringReader(xmlPayload));
+        return loopXmlParser;
     }
 
     public static boolean isNull(Object payload) {

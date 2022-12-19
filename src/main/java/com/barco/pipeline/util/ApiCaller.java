@@ -1,5 +1,6 @@
 package com.barco.pipeline.util;
 
+import com.barco.pipeline.model.dto.QueueMessageStatusDto;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,6 +11,8 @@ import org.springframework.web.client.RestTemplate;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * @author Nabeel.amd
@@ -24,6 +27,16 @@ public class ApiCaller {
     private RestTemplate restTemplate;
 
     private ResponseEntity<?> response;
+
+    public ResponseEntity<?> apiCaller(Class<?> responseType, Object body, HttpMethod httpMethod, String url) throws Exception {
+        logger.info(">>>>>>> ApiCaller := apiCaller Start ");
+        HttpHeaders headers = new HttpHeaders();
+        this.response = this.restTemplate.exchange(url, httpMethod,
+            new HttpEntity<>(!httpMethod.equals(HttpMethod.GET) ? body : null, headers), responseType);
+        logger.debug("Response := ActiveStatus " + this.response.getStatusCode());
+        logger.debug("Response := Body " + this.response.getBody());
+        return this.response;
+    }
 
     public ResponseEntity<?> apiCaller(Class<?> responseType, Object body, HttpMethod httpMethod, String url,
         Map<String, ?> headerMap) throws Exception {
@@ -46,5 +59,22 @@ public class ApiCaller {
                 headers.add(String.valueOf(pair.getKey()), String.valueOf(pair.getValue()));
             }
         }
+    }
+
+    /**
+     * Method use to send the event status
+     * @param apiUrl
+     * @param queueMessageStatus
+     * */
+    public void sendStatusEvent(String apiUrl, QueueMessageStatusDto queueMessageStatus) {
+        ExecutorService executorService = Executors.newFixedThreadPool(2);
+        Runnable runnableTask = () -> {
+            try {
+                logger.info("Api Caller Response :- " + this.apiCaller(Object.class, queueMessageStatus, HttpMethod.POST, apiUrl));
+            } catch (Exception ex) {
+                logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));
+            }
+        };
+        executorService.submit(runnableTask);
     }
 }

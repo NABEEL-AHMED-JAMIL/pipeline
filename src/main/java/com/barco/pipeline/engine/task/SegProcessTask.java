@@ -1,7 +1,11 @@
 package com.barco.pipeline.engine.task;
 
 import com.barco.pipeline.model.bean.CsvDataBean;
+import com.barco.pipeline.model.dto.QueueMessageStatusDto;
+import com.barco.pipeline.model.dto.SourceJobQueueDto;
+import com.barco.pipeline.model.dto.SourceTaskDto;
 import com.barco.pipeline.model.enums.FileStatus;
+import com.barco.pipeline.model.enums.JobStatus;
 import com.barco.pipeline.model.enums.Status;
 import com.barco.pipeline.model.pojo.SegFiles;
 import com.barco.pipeline.model.pojo.SegFolder;
@@ -21,12 +25,10 @@ import org.supercsv.cellprocessor.ift.CellProcessor;
 import org.supercsv.io.CsvBeanWriter;
 import org.supercsv.io.ICsvBeanWriter;
 import org.supercsv.prefs.CsvPreference;
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.Unmarshaller;
 import java.io.*;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -60,6 +62,8 @@ public class SegProcessTask implements Runnable {
     @Autowired
     private SegFilesRepository segFilesRepository;
 
+    private ExtractionXmlParser extractionXmlParser;
+
     public SegProcessTask() { }
 
     public Map<String, ?> getData() {
@@ -73,42 +77,49 @@ public class SegProcessTask implements Runnable {
     @Override
     public void run() {
         // change the status into the running status
-        //SourceJobQueueDto jobQueue = (SourceJobQueueDto) this.getData().get(PipelineUtil.JOB_QUEUE);
-        //SourceTaskDto sourceTaskDto = (SourceTaskDto) this.getData().get(PipelineUtil.TASK_DETAIL);
+        SourceJobQueueDto jobQueue = (SourceJobQueueDto) this.getData().get(PipelineUtil.JOB_QUEUE);
+        SourceTaskDto sourceTask = (SourceTaskDto) this.getData().get(PipelineUtil.TASK_DETAIL);
         try {
             // call api for send the status for running
-            ExtractionXmlParser extractionXmlParser = this.extractionXmlParser(xmlPayload());
-            String validParserObject = extractionXmlParser.isValidParserObject();
+            this.extractionXmlParser = PipelineUtil.extractionXmlParser(sourceTask.getTaskPayload());
+            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
+                JobStatus.Running, jobQueue.getJobQueueId(), String.format("Job %s now in the running.", jobQueue.getJobId()),
+                QueueMessageStatusDto.QUEUE_DETAIL));
+            String validParserObject = this.extractionXmlParser.isValidParserObject();
             if (!PipelineUtil.isNull(validParserObject) && validParserObject.length() > 1) {
-                // change the status into the fail status
+                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
+                    JobStatus.Failed, jobQueue.getJobQueueId(), String.format("Job %s fail due to %s .", jobQueue.getJobId(),
+                    "Pattern Not Valid"), LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
                 return;
             }
-            File listFilesFolder = this.efsFileUtil.listFilesForFolder(extractionXmlParser.getExtractionFolder());
-            List<SegFolder> segFolders = this.segFolderRepository.findAllSegFolderBySourceJobIdAndPipelineId(1077L, 1000L);
+            File listFilesFolder = this.efsFileUtil.listFilesForFolder(this.extractionXmlParser.getExtractionFolder());
+            List<SegFolder> segFolders = this.segFolderRepository.findAllSegFolderBySourceJobIdAndPipelineId(
+                jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId()));
             if (segFolders.isEmpty()) {
-                logger.info("No Previous seg folder exist");
-                this.processLogsToCsvFile(segFolders, listFilesFolder, extractionXmlParser, 1077L, 1000L);
+                this.processLogsToCsvFile(segFolders, listFilesFolder, this.extractionXmlParser, jobQueue, Long.valueOf(sourceTask.getPipelineId()));
             } else {
-                // file exit use below use case
                 List<String> localTargetFolderName = Arrays.asList(listFilesFolder.list());
-                // get those file which are not delete
                 List<String> storeTargetFolderName = this.getStoreTargetFolderName(segFolders, false);
                 storeTargetFolderName.removeAll(localTargetFolderName);
                 if (!storeTargetFolderName.isEmpty()) {
-                    // update file/folder status these deleted
                     this.segFolderRepository.updateFolderBySourceJobIdAndPipelineIdAndTargetFolderNameIn
-                        (FileStatus.Delete.ordinal(),1077L, 1000L,storeTargetFolderName);
+                        (FileStatus.Delete.ordinal(), jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId()), storeTargetFolderName);
                     this.segFilesRepository.updateFileBySourceJobIdAndPipelineIdAndTargetFolderNameIn
-                        (FileStatus.Delete.ordinal(),1077L, 1000L,storeTargetFolderName);
-                    logger.info(String.format("Folders %s deleting with sourceJobId[%d] Or pipelineId[%d]",
-                        storeTargetFolderName, 1077L, 1000L));
+                        (FileStatus.Delete.ordinal(), jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId()), storeTargetFolderName);
+                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                        String.format("Folders %s deleting with sourceJobId[%d] Or pipelineId[%d]", storeTargetFolderName,
+                        jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId())), QueueMessageStatusDto.AUDIT_LOG));
                 }
-                this.processLogsToCsvFile(segFolders, listFilesFolder, extractionXmlParser, 1077L, 1000L);
+                this.processLogsToCsvFile(segFolders, listFilesFolder, this.extractionXmlParser, jobQueue, Long.valueOf(sourceTask.getPipelineId()));
             }
-            // change the status into the complete status
+            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
+                JobStatus.Completed, jobQueue.getJobQueueId(), String.format("Job %s now complete.", jobQueue.getJobId()),
+                LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
         } catch (Exception ex) {
             logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));
-            // change the status into the fail status
+            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
+                JobStatus.Failed, jobQueue.getJobQueueId(), String.format("Job %s fail due to %s .", jobQueue.getJobId(),
+                ExceptionUtil.getRootCauseMessage(ex)), LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
         }
     }
 
@@ -116,53 +127,52 @@ public class SegProcessTask implements Runnable {
      * Method use to process the new file
      * @param folderFiles
      * @param extractionXmlParser
-     * @param sourceJobId
+     * @param jobQueue
      * */
-    private void processLogsToCsvFile(List<SegFolder> segFolders, File folderFiles,
-        ExtractionXmlParser extractionXmlParser, Long sourceJobId, Long pipelineId) {
+    private void processLogsToCsvFile(List<SegFolder> segFolders, File folderFiles, ExtractionXmlParser extractionXmlParser,
+        SourceJobQueueDto jobQueue, Long pipelineId) {
         List<String> storeTargetFolderName = this.getStoreTargetFolderName(segFolders, true);
         for (File folderFile: folderFiles.listFiles()) {
-            logger.info(String.format("Current folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
-                folderFile.getName(), sourceJobId, pipelineId));
+            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+               String.format("Current folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]", folderFile.getName(),
+               jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
             Pattern pattern = Pattern.compile(extractionXmlParser.getExtractionFolderPattern());
             Matcher matcher = pattern.matcher(folderFile.getName());
             if (!matcher.matches()) {
-                logger.info(String.format("Pattern not match skipping folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
-                    folderFile.getName(), sourceJobId, pipelineId));
-                // send the logs detail folder not match
+                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                    String.format("Pattern not match skipping folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                    folderFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 continue;
             }
-            // for new file process below
             String writingLocation = extractionXmlParser.getTargetTaskFolderPattern()
-                .replace(SOURCE_JOB_ID, String.valueOf(sourceJobId)).replace(TODAY_DATE, String.valueOf(LocalDate.now()))
+                .replace(SOURCE_JOB_ID, String.valueOf(jobQueue.getJobId())).replace(TODAY_DATE, String.valueOf(LocalDate.now()))
                 .replace(PIPELINE_ID, String.valueOf(pipelineId)).replace(CURRENT_FOLDER,folderFile.getName());
             writingLocation = extractionXmlParser.getTargetFolder() + writingLocation;
             if (!storeTargetFolderName.contains(folderFile.getName()) && this.efsFileUtil.makeDir(writingLocation)
                 && (extractionXmlParser.getExtractionFileType().equals(LOG_TYPE) && extractionXmlParser.getTargetFileType().equals(CSV_TYPE)) ) {
-                SegFolder segFolder =  this.createNewSegFolder(folderFile, sourceJobId, pipelineId);
+                SegFolder segFolder =  this.createNewSegFolder(folderFile, jobQueue.getJobId(), pipelineId);
                 segFolder.setTargetFolderValidFiles(this.getTotalValidFileCount(folderFile, extractionXmlParser));
                 segFolder.setExtFolderLocation(writingLocation);
                 this.segFolderRepository.save(segFolder);
-                logger.info(String.format("Current folder[%s] save into db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
-                    folderFile.getName(),segFolder.getFolderId(), sourceJobId, pipelineId));
-                this.logsToCsvFile(folderFile, segFolder, extractionXmlParser, sourceJobId, pipelineId, false);
-            // for old file and deleted file process below
+                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                    String.format("Current folder[%s] save into db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                    folderFile.getName(),segFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
+                this.logsToCsvFile(folderFile, segFolder, extractionXmlParser, jobQueue, pipelineId, false);
             } else if (extractionXmlParser.getExtractionFileType().equals(LOG_TYPE) && extractionXmlParser.getTargetFileType().equals(CSV_TYPE)) {
-                // this case will check db folder match with the local folder and both have same size its mean it's not update
-                SegFolder oldSegFolder = segFolders.stream().filter(pSegFolder -> pSegFolder.getSourceJobId().equals(sourceJobId)
+                SegFolder oldSegFolder = segFolders.stream().filter(pSegFolder -> pSegFolder.getSourceJobId().equals(jobQueue.getJobId())
                     && pSegFolder.getPipelineId().equals(pipelineId) && pSegFolder.getTargetFolderName()
                     .equals(folderFile.getName())).findFirst().orElse(null);
-                // change the status to old
                 if (!PipelineUtil.isNull(oldSegFolder) && (oldSegFolder.getTargetFolderStatus().equals(FileStatus.Delete) ||
-                    oldSegFolder.getTargetFolderStatus().equals(FileStatus.New)) && oldSegFolder.getTargetLastModified()
-                    .equals(folderFile.lastModified())) {
-                    logger.info(String.format("Folder[%s] is old in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
-                        oldSegFolder.getTargetFolderName(), oldSegFolder.getFolderId(), sourceJobId, pipelineId));
+                    oldSegFolder.getTargetFolderStatus().equals(FileStatus.New)) &&
+                    oldSegFolder.getTargetLastModified().equals(folderFile.lastModified())) {
                     oldSegFolder.setTargetFolderStatus(FileStatus.OLD);
                     this.segFolderRepository.save(oldSegFolder);
-                    this.segFilesRepository.updateFileBySourceJobIdAndPipelineIdAndTargetFolderName(
-                        FileStatus.OLD.ordinal(), sourceJobId, pipelineId, folderFile.getName());
-                } else { // modified case
+                    this.segFilesRepository.updateFileBySourceJobIdAndPipelineIdAndTargetFolderName(FileStatus.OLD.ordinal(),
+                        jobQueue.getJobId(), pipelineId, folderFile.getName());
+                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                        String.format("Folder[%s] is old in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                        oldSegFolder.getTargetFolderName(), oldSegFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
+                } else {
                     this.efsFileUtil.makeDir(writingLocation);
                     oldSegFolder.setTargetFolderStatus(FileStatus.Modified);
                     oldSegFolder.setTargetLastModified(folderFile.lastModified());
@@ -170,41 +180,45 @@ public class SegProcessTask implements Runnable {
                     oldSegFolder.setExtFolderLocation(writingLocation);
                     oldSegFolder.setTargetFolderTotalFiles(Arrays.stream(folderFile.listFiles()).count());
                     this.segFolderRepository.save(oldSegFolder);
-                    logger.info(String.format("Folder[%s] is modified in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
-                        oldSegFolder.getTargetFolderName(), oldSegFolder.getFolderId(), sourceJobId, pipelineId));
-                    this.logsToCsvFile(folderFile, oldSegFolder, extractionXmlParser, sourceJobId, pipelineId, true);
+                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                        String.format("Folder[%s] is modified in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                        oldSegFolder.getTargetFolderName(), oldSegFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
+                    this.logsToCsvFile(folderFile, oldSegFolder, extractionXmlParser, jobQueue, pipelineId, true);
                 }
             }
         }
     }
 
     private void logsToCsvFile(File folderFile, SegFolder segFolder, ExtractionXmlParser extractionXmlParser,
-        Long sourceJobId, Long pipelineId, boolean isModified) {
+        SourceJobQueueDto jobQueue, Long pipelineId, boolean isModified) {
         if (isModified) {
-            this.segFilesRepository.deleteFileBySourceJobIdAndPipelineIdAndFolderId(
-                sourceJobId, pipelineId, segFolder.getFolderId());
+            this.segFilesRepository.deleteFileBySourceJobIdAndPipelineIdAndFolderId(jobQueue.getJobId(), pipelineId, segFolder.getFolderId());
+            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                String.format("File deleting from db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                    segFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
         }
         for (File logFile: folderFile.listFiles()) {
             try {
                 Pattern pattern = Pattern.compile(extractionXmlParser.getExtractionFilePattern());
                 Matcher matcher = pattern.matcher(logFile.getName());
                 if (!matcher.matches()) {
-                    logger.info(String.format("Pattern not match skipping folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
-                        folderFile.getName(), logFile.getName(), sourceJobId, pipelineId));
-                    // send the logs detail file not match
+                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                        String.format("Pattern not match skipping folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                        folderFile.getName(), logFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                     continue;
                 }
                 // reading file detail log file start
                 FileInputStream fileInputStream = new FileInputStream(logFile.getAbsoluteFile());
                 BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(fileInputStream));
-                logger.info(String.format("File reading folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
-                    folderFile.getName(), logFile.getName(), sourceJobId, pipelineId));
-                // writer file detail csv start
+                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                    String.format("File reading folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                    folderFile.getName(), logFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 String writerFileName = logFile.getName().replace(extractionXmlParser.getExtractionFileType(), extractionXmlParser.getTargetFileType());
                 File csvFile = new File(segFolder.getExtFolderLocation()+SLASH+writerFileName);
                 ICsvBeanWriter csvBeanWriter = new CsvBeanWriter(new FileWriter(csvFile), CsvPreference.STANDARD_PREFERENCE);
-                logger.info(String.format("File writing folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
-                    segFolder.getExtFolderLocation(), writerFileName, sourceJobId, pipelineId));
+                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                    String.format("File writing folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                    segFolder.getExtFolderLocation(), writerFileName, jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 final String[] header = extractionXmlParser.getCsvFiled().stream().toArray(String[] ::new);
                 final CellProcessor[] processors = getProcessors();
                 csvBeanWriter.writeHeader(header);
@@ -228,9 +242,9 @@ public class SegProcessTask implements Runnable {
                 bufferedReader.close();
                 if(!PipelineUtil.isNull(csvBeanWriter)) { csvBeanWriter.close(); }
                 if (!isDeviceAdded) {
-                    logger.info(String.format("Current folder[%s]=>file[%s] not have any device deleting from storage",
-                        segFolder.getExtFolderLocation(), writerFileName));
-                    // reduce the count also from the folder table
+                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                        String.format("Current folder[%s]=>file[%s] not have any device deleting from storage",
+                        segFolder.getExtFolderLocation(), writerFileName), QueueMessageStatusDto.AUDIT_LOG));
                     Optional<SegFolder> reduceSegFolderCount = this.segFolderRepository.findById(segFolder.getFolderId());
                     reduceSegFolderCount.get().setTargetFolderValidFiles(reduceSegFolderCount.get()
                         .getTargetFolderValidFiles() != 0 ? reduceSegFolderCount.get().getTargetFolderValidFiles() -1 : 0);
@@ -253,11 +267,11 @@ public class SegProcessTask implements Runnable {
                 segFiles.setExtFileLastModified(csvFile.lastModified());
                 segFiles.setStatus(Status.Active);
                 this.segFilesRepository.save(segFiles);
-                logger.info(String.format("Current folder[%s]=>file[%s] save into db with fileId[%d] and sourceJobId[%d] Or pipelineId[%d]",
-                    segFolder.getExtFolderLocation(), writerFileName, segFiles.getFileId(), sourceJobId, pipelineId));
+                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
+                    String.format("Current folder[%s]=>file[%s] save into db with fileId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                    segFolder.getExtFolderLocation(), writerFileName, segFiles.getFileId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
             } catch (Exception ex) {
                 logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));
-                // change the status into the fail status
             }
         }
     }
@@ -323,43 +337,6 @@ public class SegProcessTask implements Runnable {
             validFileCount = validFileCount+1;
         }
         return validFileCount;
-    }
-
-    /**
-     * Method use to convert the xml to pojo object
-     * @param xmlPayload
-     * @return ExtractionXmlParser
-     * */
-    private ExtractionXmlParser extractionXmlParser(String xmlPayload) throws JAXBException {
-        JAXBContext jaxbContext = JAXBContext.newInstance(ExtractionXmlParser.class);
-        Unmarshaller jaxbUnMarshaller = jaxbContext.createUnmarshaller();
-        ExtractionXmlParser loopXmlParser = (ExtractionXmlParser) jaxbUnMarshaller.unmarshal(new StringReader(xmlPayload));
-        return loopXmlParser;
-    }
-
-    private String xmlPayload() {
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n" +
-            "<extractionXmlParser>\n" +
-            "  <jobStatusUrl>JOB_STATUS_AND_LOG_API</jobStatusUrl>\n" +
-            "  <extractionLinePattern>==&gt;&gt;&gt;&gt; Inpt line</extractionLinePattern>\n" +
-            "  <extractionFolder>D:\\efs\\logs-folder</extractionFolder>\n" +
-            "  <extractionFileType>log</extractionFileType>\n" +
-            "  <targetFolder>D:\\efs\\csv-folder\\</targetFolder>\n" +
-            "  <targetFileType>csv</targetFileType>\n" +
-            "  <targetTaskFolderPattern>{sourceJobId}/{todayDate}-{pipelineId}/{currentFolder}</targetTaskFolderPattern>\n" +
-            "  <extractionFolderPattern>^([0-9]{4}|[0-9]{2})[-]([0]?[1-9]|[1][0-2])[-]([0]?[1-9]|[1|2][0-9]|[3][0|1])$</extractionFolderPattern>\n" +
-            "  <extractionFilePattern>^appnexus[-]([0-9]{4}|[0-9]{2})[-]([0]?[1-9]|[1][0-2])[-]([0]?[1-9]|[1|2][0-9]|[3][0|1])[-]([0-9]{4}|[0-9]{3}|[0-9]{2}|[0-9]{1}).log$</extractionFilePattern>\n" +
-            "  <targetFolderPattern>^([0-9]{4}|[0-9]{2})[-]([0]?[1-9]|[1][0-2])[-]([0]?[1-9]|[1|2][0-9]|[3][0|1])[-]([0-9]{4})$</targetFolderPattern>\n" +
-            "  <targetFilePattern>^appnexus[-]([0-9]{4}|[0-9]{2})[-]([0]?[1-9]|[1][0-2])[-]([0]?[1-9]|[1|2][0-9]|[3][0|1])[-]([0-9]{4}|[0-9]{3}|[0-9]{2}|[0-9]{1}).csv$</targetFilePattern>\n" +
-            "  <csvFiled>deviceId</csvFiled>\n" +
-            "  <csvFiled>deviceType</csvFiled>\n" +
-            "  <csvFiled>driveByTime</csvFiled>\n" +
-            "  <csvFiled>latitude</csvFiled>\n" +
-            "  <csvFiled>longitude</csvFiled>\n" +
-            "  <csvFiled>driveByTimeOut</csvFiled>\n" +
-            "  <csvFiled>latitudeOut</csvFiled>\n" +
-            "  <csvFiled>longitudeOut</csvFiled>\n" +
-            "</extractionXmlParser>\n";
     }
 
 }

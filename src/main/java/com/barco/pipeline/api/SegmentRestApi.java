@@ -17,6 +17,4 @@ public class SegmentRestApi {
 
     private Logger logger = LoggerFactory.getLogger(SegmentRestApi.class);
 
-    // get all folder
-    // get all file by folder id
 }
