@@ -67,14 +67,10 @@ public class ApiCaller {
      * @param queueMessageStatus
      * */
     public void sendStatusEvent(String apiUrl, QueueMessageStatusDto queueMessageStatus) {
-        ExecutorService executorService = Executors.newFixedThreadPool(2);
-        Runnable runnableTask = () -> {
-            try {
-                logger.info("Api Caller Response :- " + this.apiCaller(Object.class, queueMessageStatus, HttpMethod.POST, apiUrl));
-            } catch (Exception ex) {
-                logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));
-            }
-        };
-        executorService.submit(runnableTask);
+        try {
+            logger.info("Api Caller Response :- " + this.apiCaller(Object.class, queueMessageStatus, HttpMethod.PUT, apiUrl));
+        } catch (Exception ex) {
+            logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));
+        }
     }
 }

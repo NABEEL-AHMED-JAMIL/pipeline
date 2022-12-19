@@ -11,6 +11,7 @@ import com.barco.pipeline.model.pojo.SegFiles;
 import com.barco.pipeline.model.pojo.SegFolder;
 import com.barco.pipeline.model.repository.SegFilesRepository;
 import com.barco.pipeline.model.repository.SegFolderRepository;
+import com.barco.pipeline.model.service.impl.LookupDataCacheService;
 import com.barco.pipeline.util.ApiCaller;
 import com.barco.pipeline.util.EfsFileUtil;
 import com.barco.pipeline.util.PipelineUtil;
@@ -61,7 +62,8 @@ public class SegProcessTask implements Runnable {
     private SegFolderRepository segFolderRepository;
     @Autowired
     private SegFilesRepository segFilesRepository;
-
+    @Autowired
+    private LookupDataCacheService lookupDataCacheService;
     private ExtractionXmlParser extractionXmlParser;
 
     public SegProcessTask() { }
@@ -82,14 +84,14 @@ public class SegProcessTask implements Runnable {
         try {
             // call api for send the status for running
             this.extractionXmlParser = PipelineUtil.extractionXmlParser(sourceTask.getTaskPayload());
-            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
-                JobStatus.Running, jobQueue.getJobQueueId(), String.format("Job %s now in the running.", jobQueue.getJobId()),
-                QueueMessageStatusDto.QUEUE_DETAIL));
+            this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                new QueueMessageStatusDto(jobQueue.getJobId(), JobStatus.Running, jobQueue.getJobQueueId(), String.format("Job %s now in the running.",
+                jobQueue.getJobId()), QueueMessageStatusDto.QUEUE_DETAIL));
             String validParserObject = this.extractionXmlParser.isValidParserObject();
             if (!PipelineUtil.isNull(validParserObject) && validParserObject.length() > 1) {
-                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
-                    JobStatus.Failed, jobQueue.getJobQueueId(), String.format("Job %s fail due to %s .", jobQueue.getJobId(),
-                    "Pattern Not Valid"), LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
+                this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                    new QueueMessageStatusDto(jobQueue.getJobId(), JobStatus.Failed, jobQueue.getJobQueueId(), String.format("Job %s fail due to %s .",
+                    jobQueue.getJobId(), "Pattern Not Valid"), LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
                 return;
             }
             File listFilesFolder = this.efsFileUtil.listFilesForFolder(this.extractionXmlParser.getExtractionFolder());
@@ -106,19 +108,19 @@ public class SegProcessTask implements Runnable {
                         (FileStatus.Delete.ordinal(), jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId()), storeTargetFolderName);
                     this.segFilesRepository.updateFileBySourceJobIdAndPipelineIdAndTargetFolderNameIn
                         (FileStatus.Delete.ordinal(), jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId()), storeTargetFolderName);
-                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                        String.format("Folders %s deleting with sourceJobId[%d] Or pipelineId[%d]", storeTargetFolderName,
-                        jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId())), QueueMessageStatusDto.AUDIT_LOG));
+                    this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                        new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Folders %s deleting with sourceJobId[%d] Or pipelineId[%d]",
+                        storeTargetFolderName, jobQueue.getJobId(), Long.valueOf(sourceTask.getPipelineId())), QueueMessageStatusDto.AUDIT_LOG));
                 }
                 this.processLogsToCsvFile(segFolders, listFilesFolder, this.extractionXmlParser, jobQueue, Long.valueOf(sourceTask.getPipelineId()));
             }
-            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
-                JobStatus.Completed, jobQueue.getJobQueueId(), String.format("Job %s now complete.", jobQueue.getJobId()),
-                LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
+            this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                new QueueMessageStatusDto(jobQueue.getJobId(), JobStatus.Completed, jobQueue.getJobQueueId(), String.format("Job %s now complete.",
+                jobQueue.getJobId()), LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
         } catch (Exception ex) {
             logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));
-            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobId(),
-                JobStatus.Failed, jobQueue.getJobQueueId(), String.format("Job %s fail due to %s .", jobQueue.getJobId(),
+            this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                new QueueMessageStatusDto(jobQueue.getJobId(), JobStatus.Failed, jobQueue.getJobQueueId(), String.format("Job %s fail due to %s .", jobQueue.getJobId(),
                 ExceptionUtil.getRootCauseMessage(ex)), LocalDateTime.now(), QueueMessageStatusDto.QUEUE_DETAIL));
         }
     }
@@ -133,14 +135,14 @@ public class SegProcessTask implements Runnable {
         SourceJobQueueDto jobQueue, Long pipelineId) {
         List<String> storeTargetFolderName = this.getStoreTargetFolderName(segFolders, true);
         for (File folderFile: folderFiles.listFiles()) {
-            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-               String.format("Current folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]", folderFile.getName(),
-               jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
+            this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+               new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Current folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+               folderFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
             Pattern pattern = Pattern.compile(extractionXmlParser.getExtractionFolderPattern());
             Matcher matcher = pattern.matcher(folderFile.getName());
             if (!matcher.matches()) {
-                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                    String.format("Pattern not match skipping folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                    new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Pattern not match skipping folder[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
                     folderFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 continue;
             }
@@ -154,8 +156,8 @@ public class SegProcessTask implements Runnable {
                 segFolder.setTargetFolderValidFiles(this.getTotalValidFileCount(folderFile, extractionXmlParser));
                 segFolder.setExtFolderLocation(writingLocation);
                 this.segFolderRepository.save(segFolder);
-                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                    String.format("Current folder[%s] save into db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                    new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Current folder[%s] save into db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
                     folderFile.getName(),segFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 this.logsToCsvFile(folderFile, segFolder, extractionXmlParser, jobQueue, pipelineId, false);
             } else if (extractionXmlParser.getExtractionFileType().equals(LOG_TYPE) && extractionXmlParser.getTargetFileType().equals(CSV_TYPE)) {
@@ -169,10 +171,10 @@ public class SegProcessTask implements Runnable {
                     this.segFolderRepository.save(oldSegFolder);
                     this.segFilesRepository.updateFileBySourceJobIdAndPipelineIdAndTargetFolderName(FileStatus.OLD.ordinal(),
                         jobQueue.getJobId(), pipelineId, folderFile.getName());
-                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                        String.format("Folder[%s] is old in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                    this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                        new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Folder[%s] is old in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
                         oldSegFolder.getTargetFolderName(), oldSegFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
-                } else {
+                } else if (!oldSegFolder.getTargetLastModified().equals(folderFile.lastModified())) {
                     this.efsFileUtil.makeDir(writingLocation);
                     oldSegFolder.setTargetFolderStatus(FileStatus.Modified);
                     oldSegFolder.setTargetLastModified(folderFile.lastModified());
@@ -180,8 +182,8 @@ public class SegProcessTask implements Runnable {
                     oldSegFolder.setExtFolderLocation(writingLocation);
                     oldSegFolder.setTargetFolderTotalFiles(Arrays.stream(folderFile.listFiles()).count());
                     this.segFolderRepository.save(oldSegFolder);
-                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                        String.format("Folder[%s] is modified in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                    this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                        new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Folder[%s] is modified in db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
                         oldSegFolder.getTargetFolderName(), oldSegFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                     this.logsToCsvFile(folderFile, oldSegFolder, extractionXmlParser, jobQueue, pipelineId, true);
                 }
@@ -193,8 +195,8 @@ public class SegProcessTask implements Runnable {
         SourceJobQueueDto jobQueue, Long pipelineId, boolean isModified) {
         if (isModified) {
             this.segFilesRepository.deleteFileBySourceJobIdAndPipelineIdAndFolderId(jobQueue.getJobId(), pipelineId, segFolder.getFolderId());
-            this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                String.format("File deleting from db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+            this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("File deleting from db with folderId[%d] and sourceJobId[%d] Or pipelineId[%d]",
                     segFolder.getFolderId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
         }
         for (File logFile: folderFile.listFiles()) {
@@ -202,22 +204,22 @@ public class SegProcessTask implements Runnable {
                 Pattern pattern = Pattern.compile(extractionXmlParser.getExtractionFilePattern());
                 Matcher matcher = pattern.matcher(logFile.getName());
                 if (!matcher.matches()) {
-                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                        String.format("Pattern not match skipping folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                    this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                        new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Pattern not match skipping folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
                         folderFile.getName(), logFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                     continue;
                 }
                 // reading file detail log file start
                 FileInputStream fileInputStream = new FileInputStream(logFile.getAbsoluteFile());
                 BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(fileInputStream));
-                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                    String.format("File reading folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                    new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("File reading folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
                     folderFile.getName(), logFile.getName(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 String writerFileName = logFile.getName().replace(extractionXmlParser.getExtractionFileType(), extractionXmlParser.getTargetFileType());
                 File csvFile = new File(segFolder.getExtFolderLocation()+SLASH+writerFileName);
                 ICsvBeanWriter csvBeanWriter = new CsvBeanWriter(new FileWriter(csvFile), CsvPreference.STANDARD_PREFERENCE);
-                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                    String.format("File writing folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
+                this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                    new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("File writing folder[%s]=>file[%s] processing with sourceJobId[%d] Or pipelineId[%d]",
                     segFolder.getExtFolderLocation(), writerFileName, jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
                 final String[] header = extractionXmlParser.getCsvFiled().stream().toArray(String[] ::new);
                 final CellProcessor[] processors = getProcessors();
@@ -233,8 +235,9 @@ public class SegProcessTask implements Runnable {
                         String colData[] = strLine.split(COMMA);
                         if (colData.length == 8) {
                             if (!isDeviceAdded) { isDeviceAdded = true; }
-                            CsvDataBean csvDataBean = new CsvDataBean(colData[0],colData[1],colData[2],colData[3],
-                                colData[4],colData[5],colData[6],colData[7]);
+                            int index = 0;
+                            CsvDataBean csvDataBean = new CsvDataBean(colData[index],colData[++index],colData[++index],colData[++index],
+                                colData[++index],colData[++index],colData[++index],colData[++index]);
                             csvBeanWriter.write(csvDataBean, header, processors);
                         }
                     }
@@ -242,8 +245,8 @@ public class SegProcessTask implements Runnable {
                 bufferedReader.close();
                 if(!PipelineUtil.isNull(csvBeanWriter)) { csvBeanWriter.close(); }
                 if (!isDeviceAdded) {
-                    this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                        String.format("Current folder[%s]=>file[%s] not have any device deleting from storage",
+                    this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                        new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Current folder[%s]=>file[%s] not have any device deleting from storage",
                         segFolder.getExtFolderLocation(), writerFileName), QueueMessageStatusDto.AUDIT_LOG));
                     Optional<SegFolder> reduceSegFolderCount = this.segFolderRepository.findById(segFolder.getFolderId());
                     reduceSegFolderCount.get().setTargetFolderValidFiles(reduceSegFolderCount.get()
@@ -267,8 +270,8 @@ public class SegProcessTask implements Runnable {
                 segFiles.setExtFileLastModified(csvFile.lastModified());
                 segFiles.setStatus(Status.Active);
                 this.segFilesRepository.save(segFiles);
-                this.apiCaller.sendStatusEvent(this.extractionXmlParser.getJobStatusUrl(), new QueueMessageStatusDto(jobQueue.getJobQueueId(),
-                    String.format("Current folder[%s]=>file[%s] save into db with fileId[%d] and sourceJobId[%d] Or pipelineId[%d]",
+                this.apiCaller.sendStatusEvent(this.lookupDataCacheService.getParentLookupById(this.extractionXmlParser.getJobStatusUrl()).getLookupValue(),
+                    new QueueMessageStatusDto(jobQueue.getJobQueueId(), String.format("Current folder[%s]=>file[%s] save into db with fileId[%d] and sourceJobId[%d] Or pipelineId[%d]",
                     segFolder.getExtFolderLocation(), writerFileName, segFiles.getFileId(), jobQueue.getJobId(), pipelineId), QueueMessageStatusDto.AUDIT_LOG));
             } catch (Exception ex) {
                 logger.error("Exception :- " + ExceptionUtil.getRootCauseMessage(ex));

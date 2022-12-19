@@ -16,7 +16,7 @@ import java.util.List;
 public interface SegFilesRepository extends JpaRepository<SegFiles, Long> {
 
     @Modifying
-    @Query(value = "delete from seg_files where source_job_id = ?1 and pipeline_id = ?2 and folder_id = ?3 ", nativeQuery = true)
+    @Query(value = "delete from seg_files where folder_id in (select folder_id from seg_folder where source_job_id = ?1 and pipeline_id = ?2 and folder_id = ?3) ", nativeQuery = true)
     void deleteFileBySourceJobIdAndPipelineIdAndFolderId(Long sourceJobId, Long pipelineId, Long folderId);
 
     @Modifying

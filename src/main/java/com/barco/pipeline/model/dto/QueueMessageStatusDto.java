@@ -27,6 +27,7 @@ public class QueueMessageStatusDto {
 
     public QueueMessageStatusDto(Long jobQueueId, String logsDetail, String messageType) {
         this.jobQueueId = jobQueueId;
+        this.logsDetail = logsDetail;
         this.messageType = messageType;
     }
 
